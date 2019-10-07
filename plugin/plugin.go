@@ -52,6 +52,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -264,8 +265,8 @@ func (p *plugin) generateProto2Message(file *generator.FileDescriptor, message *
 
 func (p *plugin) generateProto3Message(file *generator.FileDescriptor, message *generator.Descriptor) {
 	ccTypeName := generator.CamelCaseSlice(message.TypeName())
-	p.P(`func (this *`, ccTypeName, `) Validate() error {`)
-	p.In()
+
+	regValid, _ := regexp.Compile(`@\[(.*)\]`)
 
 	for _, oneof := range message.OneofDecl {
 		oneofValidator := getOneofValidatorIfAny(oneof)
@@ -281,14 +282,35 @@ func (p *plugin) generateProto3Message(file *generator.FileDescriptor, message *
 			p.P(`}`)
 		}
 	}
-	for _, field := range message.Field {
+	hasValid := true
+	for j, field := range message.Field {
+		comment := p.Comments(fmt.Sprintf("%s,%d,%d", message.Path, 0, j))
+		res := regValid.FindStringSubmatch(comment)
+		if len(res) > 0 {
+			fmt.Println(res[1])
+		}
+		if hasValid {
+			p.P(`func (this *`, ccTypeName, `) Validate() error {`)
+			p.In()
+			hasValid = false
+		}
+
+		for _, v := range strings.Split(res[1], ",") {
+			if p.isSupportedInt(field) {
+				if strings.HasPrefix(v, "gte") {
+
+				}
+			}
+
+		}
+
 		fieldValidator := getFieldValidatorIfAny(field)
 		if fieldValidator == nil && !field.IsMessage() {
 			continue
 		}
 		isOneOf := field.OneofIndex != nil
 		fieldName := p.GetOneOfFieldName(message, field)
-		variableName := "this." + fieldName
+		variableName := "m." + fieldName
 		repeated := field.IsRepeated()
 		// Golang's proto3 has no concept of unset primitive fields
 		nullable := (gogoproto.IsNullable(field) || !gogoproto.ImportsGoGoProto(file.FileDescriptorProto)) && field.IsMessage()
@@ -371,9 +393,12 @@ func (p *plugin) generateProto3Message(file *generator.FileDescriptor, message *
 			p.P(`}`)
 		}
 	}
-	p.P(`return nil`)
-	p.Out()
-	p.P(`}`)
+	if !hasValid {
+		p.P(`return nil`)
+		p.Out()
+		p.P(`}`)
+	}
+
 }
 
 func (p *plugin) generateIntValidator(variableName string, ccTypeName string, fieldName string, fv *validator.FieldValidator) {
