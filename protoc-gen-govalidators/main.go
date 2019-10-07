@@ -6,7 +6,6 @@ package main
 import (
 	"io/ioutil"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/gogo/protobuf/proto"
@@ -30,7 +29,7 @@ func main() {
 		gen.Fail("no files to generate")
 	}
 
-	useGogoImport := false
+	// useGogoImport := false
 	// Match parsing algorithm from Generator.CommandLineParameters
 	for _, parameter := range strings.Split(gen.Request.GetParameter(), ",") {
 		kvp := strings.SplitN(parameter, "=", 2)
@@ -38,7 +37,7 @@ func main() {
 		if len(kvp) != 2 || kvp[0] != "gogoimport" {
 			continue
 		}
-		useGogoImport, err = strconv.ParseBool(kvp[1])
+		// useGogoImport, err = strconv.ParseBool(kvp[1])
 		if err != nil {
 			gen.Error(err, "parsing gogoimport option")
 		}
@@ -49,7 +48,8 @@ func main() {
 	gen.WrapTypes()
 	gen.SetPackageNames()
 	gen.BuildTypeNameMap()
-	gen.GeneratePlugin(validator_plugin.NewPlugin(useGogoImport))
+	// gen.GenerateAllFiles()
+	gen.GeneratePlugin(validator_plugin.NewPlugin(false))
 
 	for i := 0; i < len(gen.Response.File); i++ {
 		gen.Response.File[i].Name = proto.String(strings.Replace(*gen.Response.File[i].Name, ".pb.go", ".validator.pb.go", -1))
