@@ -64,6 +64,19 @@ import (
 	validator "github.com/mwitkow/go-proto-validators"
 )
 
+const (
+	// tag numbers in FileDescriptorProto
+	packagePath = 2 // package
+	messagePath = 4 // message_type
+	enumPath    = 5 // enum_type
+	// tag numbers in DescriptorProto
+	messageFieldPath   = 2 // field
+	messageMessagePath = 3 // nested_type
+	messageEnumPath    = 4 // enum_type
+	messageOneofPath   = 8 // oneof_decl
+	// tag numbers in EnumDescriptorProto
+	enumValuePath = 2 // value
+)
 const uuidPattern = "^([a-fA-F0-9]{8}-" +
 	"[a-fA-F0-9]{4}-" +
 	"[%s][a-fA-F0-9]{3}-" +
@@ -228,7 +241,7 @@ func (p *plugin) generateProto2Message(file *generator.FileDescriptor, message *
 		if field.IsString() {
 			p.generateStringValidator(variableName, ccTypeName, fieldName, fieldValidator)
 		} else if p.isSupportedInt(field) {
-			p.generateIntValidator(variableName, ccTypeName, fieldName, fieldValidator)
+			// p.generateIntValidator(variableName, ccTypeName, fieldName, fieldValidator)
 		} else if field.IsEnum() {
 			p.generateEnumValidator(field, variableName, ccTypeName, fieldName, fieldValidator)
 		} else if p.isSupportedFloat(field) {
@@ -268,45 +281,42 @@ func (p *plugin) generateProto3Message(file *generator.FileDescriptor, message *
 
 	regValid, _ := regexp.Compile(`@\[(.*)\]`)
 
-	for _, oneof := range message.OneofDecl {
-		oneofValidator := getOneofValidatorIfAny(oneof)
-		if oneofValidator == nil {
-			continue
-		}
-		if oneofValidator.GetRequired() {
-			oneOfName := generator.CamelCase(oneof.GetName())
-			p.P(`if this.Get` + oneOfName + `() == nil {`)
-			p.In()
-			p.P(`return `, p.validatorPkg.Use(), `.FieldError("`, oneOfName, `",`, p.fmtPkg.Use(), `.Errorf("one of the fields must be set"))`)
-			p.Out()
-			p.P(`}`)
-		}
-	}
+	// for _, oneof := range message.OneofDecl {
+	// 	oneofValidator := getOneofValidatorIfAny(oneof)
+	// 	if oneofValidator == nil {
+	// 		continue
+	// 	}
+	// 	if oneofValidator.GetRequired() {
+	// 		oneOfName := generator.CamelCase(oneof.GetName())
+	// 		p.P(`if this.Get` + oneOfName + `() == nil {`)
+	// 		p.In()
+	// 		p.P(`return `, p.validatorPkg.Use(), `.FieldError("`, oneOfName, `",`, p.fmtPkg.Use(), `.Errorf("one of the fields must be set"))`)
+	// 		p.Out()
+	// 		p.P(`}`)
+	// 	}
+	// }
 	hasValid := true
 	for j, field := range message.Field {
-		comment := p.Comments(fmt.Sprintf("%s,%d,%d", message.Path, 0, j))
-		res := regValid.FindStringSubmatch(comment)
-		if len(res) > 0 {
-			fmt.Println(res[1])
+		comment := p.Comments(fmt.Sprintf("%s,%d,%d", message.Path(), 2, j))
+		if comment == "" {
+			continue
 		}
+		res := regValid.FindStringSubmatch(comment)
+		if len(res) == 0 {
+			continue
+		}
+		validRule := strings.Replace(res[1], " ", "", -1)
 		if hasValid {
 			p.P(`func (this *`, ccTypeName, `) Validate() error {`)
 			p.In()
 			hasValid = false
 		}
-
-		for _, v := range strings.Split(res[1], ",") {
+		fieldName := p.GetOneOfFieldName(message, field)
+		variableName := "m." + fieldName
+		for _, v := range strings.Split(validRule, ",") {
 			if p.isSupportedInt(field) {
-				if strings.HasPrefix(v, "gte") {
-					p.P(`if !(`, variableName, ` >= `, fv.IntGt, `) {`)
-					p.In()
-					errorStr := fmt.Sprintf(`be greater than '%d'`, fv.GetIntGt())
-					p.generateErrorString(variableName, fieldName, errorStr, fv)
-					p.Out()
-					p.P(`}`)
-				}
+				p.generateIntValidator(variableName, fieldName, v)
 			}
-
 		}
 
 		fieldValidator := getFieldValidatorIfAny(field)
@@ -314,8 +324,8 @@ func (p *plugin) generateProto3Message(file *generator.FileDescriptor, message *
 			continue
 		}
 		isOneOf := field.OneofIndex != nil
-		fieldName := p.GetOneOfFieldName(message, field)
-		variableName := "m." + fieldName
+		fieldName = p.GetOneOfFieldName(message, field)
+		variableName = "m." + fieldName
 		repeated := field.IsRepeated()
 		// Golang's proto3 has no concept of unset primitive fields
 		nullable := (gogoproto.IsNullable(field) || !gogoproto.ImportsGoGoProto(file.FileDescriptorProto)) && field.IsMessage()
@@ -349,7 +359,7 @@ func (p *plugin) generateProto3Message(file *generator.FileDescriptor, message *
 		if field.IsString() {
 			p.generateStringValidator(variableName, ccTypeName, fieldName, fieldValidator)
 		} else if p.isSupportedInt(field) {
-			p.generateIntValidator(variableName, ccTypeName, fieldName, fieldValidator)
+			// p.generateIntValidator(variableName, ccTypeName, fieldName, fieldValidator)
 		} else if field.IsEnum() {
 			p.generateEnumValidator(field, variableName, ccTypeName, fieldName, fieldValidator)
 		} else if p.isSupportedFloat(field) {
@@ -406,20 +416,13 @@ func (p *plugin) generateProto3Message(file *generator.FileDescriptor, message *
 
 }
 
-func (p *plugin) generateIntValidator(variableName string, ccTypeName string, fieldName string, fv *validator.FieldValidator) {
-	if fv.IntGt != nil {
-		p.P(`if !(`, variableName, ` > `, fv.IntGt, `) {`)
+func (p *plugin) generateIntValidator(variableName string, fieldName string, v string) {
+	if strings.HasPrefix(v, "gte") {
+		targetV := strings.TrimPrefix(v, "gte=")
+		p.P(`if !(`, variableName, ` >= `, targetV, `) {`)
 		p.In()
-		errorStr := fmt.Sprintf(`be greater than '%d'`, fv.GetIntGt())
-		p.generateErrorString(variableName, fieldName, errorStr, fv)
-		p.Out()
-		p.P(`}`)
-	}
-	if fv.IntLt != nil {
-		p.P(`if !(`, variableName, ` < `, fv.IntLt, `) {`)
-		p.In()
-		errorStr := fmt.Sprintf(`be less than '%d'`, fv.GetIntLt())
-		p.generateErrorString(variableName, fieldName, errorStr, fv)
+		errorStr := fmt.Sprintf(`%s be greater than '%s'`, fieldName, targetV)
+		p.generateErrorString(variableName, fieldName, errorStr)
 		p.Out()
 		p.P(`}`)
 	}
@@ -433,7 +436,7 @@ func (p *plugin) generateEnumValidator(
 		enum := p.ObjectNamed(field.GetTypeName()).(*generator.EnumDescriptor)
 		p.P(`if _, ok := `, strings.Join(enum.TypeName(), "_"), "_name[int32(", variableName, ")]; !ok {")
 		p.In()
-		p.generateErrorString(variableName, fieldName, fmt.Sprintf("be a valid %s field", strings.Join(enum.TypeName(), "_")), fv)
+		p.generateErrorString(variableName, fieldName, fmt.Sprintf("be a valid %s field", strings.Join(enum.TypeName(), "_")))
 		p.Out()
 		p.P(`}`)
 	}
@@ -444,7 +447,7 @@ func (p *plugin) generateLengthValidator(variableName string, ccTypeName string,
 		p.P(`if !( len(`, variableName, `) > `, fv.LengthGt, `) {`)
 		p.In()
 		errorStr := fmt.Sprintf(`have a length greater than '%d'`, fv.GetLengthGt())
-		p.generateErrorString(variableName, fieldName, errorStr, fv)
+		p.generateErrorString(variableName, fieldName, errorStr)
 		p.Out()
 		p.P(`}`)
 	}
@@ -453,7 +456,7 @@ func (p *plugin) generateLengthValidator(variableName string, ccTypeName string,
 		p.P(`if !( len(`, variableName, `) < `, fv.LengthLt, `) {`)
 		p.In()
 		errorStr := fmt.Sprintf(`have a length smaller than '%d'`, fv.GetLengthLt())
-		p.generateErrorString(variableName, fieldName, errorStr, fv)
+		p.generateErrorString(variableName, fieldName, errorStr)
 		p.Out()
 		p.P(`}`)
 	}
@@ -462,7 +465,7 @@ func (p *plugin) generateLengthValidator(variableName string, ccTypeName string,
 		p.P(`if !( len(`, variableName, `) == `, fv.LengthEq, `) {`)
 		p.In()
 		errorStr := fmt.Sprintf(`have a length equal to '%d'`, fv.GetLengthEq())
-		p.generateErrorString(variableName, fieldName, errorStr, fv)
+		p.generateErrorString(variableName, fieldName, errorStr)
 		p.Out()
 		p.P(`}`)
 	}
@@ -522,7 +525,7 @@ func (p *plugin) generateFloatValidator(variableName string, ccTypeName string, 
 		}
 		p.P(compareStr)
 		p.In()
-		p.generateErrorString(variableName, fieldName, errorStr, fv)
+		p.generateErrorString(variableName, fieldName, errorStr)
 		p.Out()
 		p.P(`}`)
 	}
@@ -542,7 +545,7 @@ func (p *plugin) generateFloatValidator(variableName string, ccTypeName string, 
 		}
 		p.P(compareStr)
 		p.In()
-		p.generateErrorString(variableName, fieldName, errorStr, fv)
+		p.generateErrorString(variableName, fieldName, errorStr)
 		p.Out()
 		p.P(`}`)
 	}
@@ -577,7 +580,7 @@ func (p *plugin) generateStringValidator(variableName string, ccTypeName string,
 		p.P(`if !`, p.regexName(ccTypeName, fieldName), `.MatchString(`, variableName, `) {`)
 		p.In()
 		errorStr := "be a string conforming to regex " + strconv.Quote(fv.GetRegex())
-		p.generateErrorString(variableName, fieldName, errorStr, fv)
+		p.generateErrorString(variableName, fieldName, errorStr)
 		p.Out()
 		p.P(`}`)
 	}
@@ -585,7 +588,7 @@ func (p *plugin) generateStringValidator(variableName string, ccTypeName string,
 		p.P(`if `, variableName, ` == "" {`)
 		p.In()
 		errorStr := "not be an empty string"
-		p.generateErrorString(variableName, fieldName, errorStr, fv)
+		p.generateErrorString(variableName, fieldName, errorStr)
 		p.Out()
 		p.P(`}`)
 	}
@@ -601,7 +604,7 @@ func (p *plugin) generateRepeatedCountValidator(variableName string, ccTypeName 
 		p.P(compareStr)
 		p.In()
 		errorStr := fmt.Sprint(`contain at least `, fv.GetRepeatedCountMin(), ` elements`)
-		p.generateErrorString(variableName, fieldName, errorStr, fv)
+		p.generateErrorString(variableName, fieldName, errorStr)
 		p.Out()
 		p.P(`}`)
 	}
@@ -610,18 +613,14 @@ func (p *plugin) generateRepeatedCountValidator(variableName string, ccTypeName 
 		p.P(compareStr)
 		p.In()
 		errorStr := fmt.Sprint(`contain at most `, fv.GetRepeatedCountMax(), ` elements`)
-		p.generateErrorString(variableName, fieldName, errorStr, fv)
+		p.generateErrorString(variableName, fieldName, errorStr)
 		p.Out()
 		p.P(`}`)
 	}
 }
 
-func (p *plugin) generateErrorString(variableName string, fieldName string, specificError string, fv *validator.FieldValidator) {
-	if fv.GetHumanError() == "" {
-		p.P(`return `, p.validatorPkg.Use(), `.FieldError("`, fieldName, `",`, p.fmtPkg.Use(), ".Errorf(`value '%v' must ", specificError, "`", `, `, variableName, `))`)
-	} else {
-		p.P(`return `, p.validatorPkg.Use(), `.FieldError("`, fieldName, `",`, p.fmtPkg.Use(), ".Errorf(`", fv.GetHumanError(), "`))")
-	}
+func (p *plugin) generateErrorString(variableName string, fieldName string, specificError string) {
+	p.P(`return `, "fmt.Errorf(`value '%v' must ", specificError, "`", `, `, variableName, `))`)
 }
 
 func (p *plugin) fieldIsProto3Map(file *generator.FileDescriptor, message *generator.Descriptor, field *descriptor.FieldDescriptorProto) bool {
