@@ -298,7 +298,12 @@ func (p *plugin) generateProto3Message(file *generator.FileDescriptor, message *
 		for _, v := range strings.Split(res[1], ",") {
 			if p.isSupportedInt(field) {
 				if strings.HasPrefix(v, "gte") {
-
+					p.P(`if !(`, variableName, ` >= `, fv.IntGt, `) {`)
+					p.In()
+					errorStr := fmt.Sprintf(`be greater than '%d'`, fv.GetIntGt())
+					p.generateErrorString(variableName, fieldName, errorStr, fv)
+					p.Out()
+					p.P(`}`)
 				}
 			}
 
